@@ -1,181 +1,189 @@
 import re
+import os
 import streamlit as st
-from audit import run_gemini_audit
+from google import genai
+from modules.audit_logic import run_gemini_audit
 from majors import PSU_MAJORS
 from utils import extract_transcript_text, fetch_bulletin_content
 
-st.set_page_config(
-    page_title="RateUrDegree - PSU Degree Auditor",
-    page_icon="🎓",
-    layout="wide",
-)
+st.set_page_config(page_title="RateUrDegree - PSU Degree Auditor", page_icon="🎓", layout="wide")
 
+# --- Initialize Persistent Session State ---
+if "audit_report" not in st.session_state:
+    st.session_state.audit_report = None
+if "raw_audit_report" not in st.session_state:
+    st.session_state.raw_audit_report = None
+if "audit_metrics" not in st.session_state:
+    st.session_state.audit_metrics = None
+
+# --- Sidebar Controls ---
 with st.sidebar:
-  st.header("Audit Configuration")
-  colleges = list(PSU_MAJORS.keys())
-  selected_college = st.selectbox("Select College", colleges)
+    st.header("Audit Configuration")
+    colleges = list(PSU_MAJORS.keys())
+    selected_college = st.selectbox("Select College", colleges)
 
-  available_majors = PSU_MAJORS.get(selected_college, {})
-  selected_major = st.selectbox("Select Major", list(available_majors.keys()))
+    available_majors = PSU_MAJORS.get(selected_college, {})
+    selected_major = st.selectbox("Select Major", list(available_majors.keys()))
 
-  use_custom_url = st.checkbox("Use Custom Bulletin URL")
-  custom_url = ""
-  if use_custom_url:
-    custom_url = st.text_input(
-        "Custom Bulletin URL", placeholder="https://bulletins.psu.edu/..."
-    )
+    use_custom_url = st.checkbox("Use Custom Bulletin URL")
+    custom_url = st.text_input("Custom Bulletin URL", placeholder="https://bulletins.psu.edu/...") if use_custom_url else ""
 
-  uploaded_file = st.file_uploader(
-      "Upload Unofficial Transcript (PDF/TXT)", type=["pdf", "txt"]
-  )
-  run_button = st.button("Run Degree Audit", type="primary")
+    uploaded_file = st.file_uploader("Upload Unofficial Transcript (PDF/TXT)", type=["pdf", "txt"])
+    run_button = st.button("Run Degree Audit", type="primary")
 
-if not run_button:
-  st.title("🎓 RateUrDegree")
-  st.markdown(
-      "Verify your degree path instantly using official Penn State Bulletin"
-      " links and AI-powered transcript auditing."
-  )
-  st.info(
-      "👈 Configure your major and upload your transcript in the sidebar on the"
-      " left to run your audit!"
-  )
-else:
-  if not uploaded_file:
-    st.error("Please upload an unofficial transcript (PDF or TXT) first.")
-  else:
-    with st.spinner("Evaluating student rank & degree audit..."):
-      major_url = available_majors.get(selected_major, "")
-      bulletin_url = (
-          custom_url if (use_custom_url and custom_url) else major_url
-      )
+# --- Audit Trigger Logic ---
+if run_button:
+    if not uploaded_file:
+        st.error("Please upload an unofficial transcript first.")
+    else:
+        with st.spinner("Evaluating student rank & degree audit..."):
+            major_url = available_majors.get(selected_major, "")
+            bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
 
-      transcript_text = extract_transcript_text(uploaded_file)
-      bulletin_text = fetch_bulletin_content(bulletin_url)
+            transcript_text = extract_transcript_text(uploaded_file)
+            bulletin_text = fetch_bulletin_content(bulletin_url)
 
-      report_text = run_gemini_audit(
-          selected_major, bulletin_text, transcript_text
-      )
+            report_text = run_gemini_audit(selected_major, bulletin_text, transcript_text)
 
-      # Extract Rank Letter (Z, S, A, B, C, D, E, F)
-      rank_match = re.search(
-          r"Student Rank:\s*([Z|S|A|B|C|D|E|F])", report_text, re.IGNORECASE
-      )
-      rank_letter = rank_match.group(1).upper() if rank_match else "S"
+            # Parse metrics
+            rank_match = re.search(r"Student Rank:\s*([Z|S|A|B|C|D|E|F])", report_text, re.IGNORECASE)
+            rank_letter = rank_match.group(1).upper() if rank_match else "S"
 
-      # Extract metrics for the top metrics card
-      year_match = re.search(r"Student Year:\s*([^\n]+)", report_text, re.IGNORECASE)
-      student_year = year_match.group(1).strip() if year_match else "Sophomore"
+            year_match = re.search(r"Student Year:\s*([^\n]+)", report_text, re.IGNORECASE)
+            student_year = year_match.group(1).strip() if year_match else "Sophomore"
 
-      gpa_match = re.search(r"Cumulative GPA:\s*([^\n]+)", report_text, re.IGNORECASE)
-      student_gpa = gpa_match.group(1).strip() if gpa_match else "3.84"
+            gpa_match = re.search(r"Cumulative GPA:\s*([^\n]+)", report_text, re.IGNORECASE)
+            student_gpa = gpa_match.group(1).strip() if gpa_match else "3.84"
 
-      credits_match = re.search(r"Credits Completed:\s*([^\n]+)", report_text, re.IGNORECASE)
-      student_credits = credits_match.group(1).strip() if credits_match else "31.0"
+            credits_match = re.search(r"Credits Completed:\s*([^\n]+)", report_text, re.IGNORECASE)
+            student_credits = credits_match.group(1).strip() if credits_match else "31.0"
 
-      # Clean out duplicate lines and old metric blocks from body text
-      clean_report = re.sub(
-          r"Student Rank:\s*[Z|S|A|B|C|D|E|F]\s*\n?",
-          "",
-          report_text,
-          flags=re.IGNORECASE,
-      )
-      clean_report = re.sub(
-          r"### Quick Student Metrics.*?(?=\n#|\n---|\Z)",
-          "",
-          clean_report,
-          flags=re.DOTALL | re.IGNORECASE,
-      ).strip()
-      
-      # Remove any leading markdown dividers left over from cleaning
-      clean_report = re.sub(r"^---+\s*", "", clean_report).strip()
+            clean_report = re.sub(r"Student Rank:\s*[Z|S|A|B|C|D|E|F]\s*\n?", "", report_text, flags=re.IGNORECASE)
+            clean_report = re.sub(r"### Quick Student Metrics.*?(?=\n#|\n---|\Z)", "", clean_report, flags=re.DOTALL | re.IGNORECASE).strip()
+            clean_report = re.sub(r"^---+\s*", "", clean_report).strip()
 
-      rank_colors = {
-          "Z": "#FFD700",
-          "S": "#38BDF8",
-          "A": "#A855F7",
-          "B": "#22C55E",
-          "C": "#EAB308",
-          "D": "#F97316",
-          "E": "#EF4444",
-          "F": "#6B7280",
-      }
-      theme_color = rank_colors.get(rank_letter, "#38BDF8")
+            # Save into session state so it survives chat reruns
+            st.session_state.audit_report = clean_report
+            st.session_state.raw_audit_report = report_text
+            st.session_state.audit_metrics = {
+                "rank_letter": rank_letter,
+                "student_year": student_year,
+                "student_gpa": student_gpa,
+                "student_credits": student_credits,
+                "selected_major": selected_major
+            }
 
-      col1, col2 = st.columns([3, 1])
+# --- Main View Rendering ---
+if st.session_state.audit_report:
+    metrics = st.session_state.audit_metrics
+    rank_colors = {"Z": "#FFD700", "S": "#38BDF8", "A": "#A855F7", "B": "#22C55E", "C": "#EAB308", "D": "#F97316", "E": "#EF4444", "F": "#6B7280"}
+    theme_color = rank_colors.get(metrics["rank_letter"], "#38BDF8")
 
-      with col1:
+    col1, col2 = st.columns([3, 1])
+    with col1:
         st.title("🎓 RateUrDegree Audit")
-        st.caption(f"Official Degree Audit Report: **{selected_major}**")
-        st.markdown("")
-        
-        # Sleek Metrics Card
-        st.markdown(
-            f"""
-            <div style="
-                background: rgba(30, 41, 59, 0.6);
-                border: 1px solid #334155;
-                border-radius: 12px;
-                padding: 14px 20px;
-                display: flex;
-                gap: 32px;
-                align-items: center;
-                margin-top: 6px;
-                margin-bottom: 12px;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            ">
-                <div>
-                    <span style="color: #94A3B8; font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Student Year</span>
-                    <div style="color: #F8FAFC; font-size: 15px; font-weight: 700; margin-top: 2px;">{student_year}</div>
-                </div>
-                <div style="border-left: 1px solid #475569; padding-left: 24px;">
-                    <span style="color: #94A3B8; font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Cumulative GPA</span>
-                    <div style="color: #38BDF8; font-size: 15px; font-weight: 700; margin-top: 2px;">{student_gpa}</div>
-                </div>
-                <div style="border-left: 1px solid #475569; padding-left: 24px;">
-                    <span style="color: #94A3B8; font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Credits Completed</span>
-                    <div style="color: #38BDF8; font-size: 15px; font-weight: 700; margin-top: 2px;">{student_credits}</div>
-                </div>
+        st.caption(f"Official Degree Audit Report: **{metrics['selected_major']}**")
+        st.markdown(f"""
+            <div style="background: rgba(30, 41, 59, 0.6); border: 1px solid #334155; border-radius: 12px; padding: 14px 20px; display: flex; gap: 32px; align-items: center; margin-top: 6px; margin-bottom: 12px;">
+                <div><span style="color: #94A3B8; font-size: 11px; font-weight: 700;">STUDENT YEAR</span><div style="color: #F8FAFC; font-size: 15px; font-weight: 700;">{metrics['student_year']}</div></div>
+                <div style="border-left: 1px solid #475569; padding-left: 24px;"><span style="color: #94A3B8; font-size: 11px; font-weight: 700;">CUMULATIVE GPA</span><div style="color: #38BDF8; font-size: 15px; font-weight: 700;">{metrics['student_gpa']}</div></div>
+                <div style="border-left: 1px solid #475569; padding-left: 24px;"><span style="color: #94A3B8; font-size: 11px; font-weight: 700;">CREDITS COMPLETED</span><div style="color: #38BDF8; font-size: 15px; font-weight: 700;">{metrics['student_credits']}</div></div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        """, unsafe_allow_html=True)
 
-      with col2:
-        with st.popover("ℹ️ Rank Legend"):
-            st.markdown("""
-            **Ranking Legend:**
-            * **Z**: 4.0+ GPA, ahead of schedule
-            * **S**: 3.8-3.99 GPA, elite & on track
-            * **A**: 3.5-3.79 GPA, strong progress
-            * **B**: 3.2-3.49 GPA, comfortable
-            * **C**: 2.8-3.19 GPA, meeting basics
-            * **D**: 2.3-2.79 GPA, near threshold
-            * **E**: 2.0-2.29 GPA, critical risk
-            * **F**: <2.0 GPA, warning
-            """)
-
-        st.markdown(
-            f"""
-            <div style="
-                background: linear-gradient(135deg, #0F172A, #1E293B);
-                border: 2px solid {theme_color};
-                border-radius: 12px;
-                padding: 14px 12px 10px 12px;
-                text-align: center;
-                box-shadow: 0px 0px 15px {theme_color}44;
-                margin-top: 4px;
-            ">
-                <div style="color: {theme_color}; font-size: 42px; font-weight: 900; line-height: 1.0;">
-                    {rank_letter}
-                </div>
-                <div style="color: #94A3B8; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin-top: 6px;">
-                    RANK
-                </div>
+    with col2:
+        with st.popover("🏆 Rank Legend"):
+            st.markdown("**Ranking Legend:**\n* **Z**: 4.0+ GPA\n* **S**: 3.8-3.99 GPA\n* **A**: 3.5-3.79 GPA\n* **B**: 3.2-3.49 GPA\n* **C**: 2.8-3.19 GPA\n* **D**: 2.3-2.79 GPA\n* **E**: 2.0-2.29 GPA\n* **F**: <2.0 GPA")
+        st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #0F172A, #1E293B); border: 2px solid {theme_color}; border-radius: 12px; padding: 14px 12px 10px 12px; text-align: center;">
+                <div style="color: {theme_color}; font-size: 42px; font-weight: 900;">{metrics['rank_letter']}</div>
+                <div style="color: #94A3B8; font-size: 11px; font-weight: 700;">RANK</div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        """, unsafe_allow_html=True)
 
-      # Render the cleaned report directly without trailing divider cluster
-      st.markdown(clean_report)
+    st.markdown(st.session_state.audit_report)
+else:
+    st.title("🎓 RateUrDegree")
+    st.markdown("Verify your degree path instantly using official Penn State Bulletin links and AI-powered transcript auditing.")
+    st.info("👈 Configure your major and upload your transcript in the sidebar on the left to run your audit!")
+
+# --- Persistent Bottom Chat Assistant ---
+st.markdown("---")
+st.subheader("💬 Bulletin Assistant Chat")
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+if prompt := st.chat_input("Ask a question about prerequisites, ETM rules, or courses..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Analyzing bulletin and degree audit..."):
+            from modules.rag_engine import BulletinRAG
+            from google import genai
+            import os
+
+            client = genai.Client(api_key=st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY"))
+            
+            # 1. Resolve actual URL from majors map
+            major_url = available_majors.get(selected_major, "")
+            bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
+            
+            # 2. Fetch official bulletin content & build RAG vector index
+            active_bulletin_text = fetch_bulletin_content(bulletin_url)
+            rag = BulletinRAG(client)
+            rag.chunk_bulletin(selected_major, active_bulletin_text)
+            rag.build_vector_store()
+            
+            # 3. Retrieve relevant bulletin context via vector search
+            retrieved_bulletin_context = rag.retrieve_context(prompt)
+            
+            # 4. Construct direct prompt combining guaranteed audit report + retrieved bulletin chunks
+            rank_legend = """
+            RANK SCALE REFERENCE:
+            - Z Rank: 4.0+ GPA, ahead of schedule
+            - S Rank: 3.8 - 3.99 GPA, elite & on track
+            - A Rank: 3.5 - 3.79 GPA, strong progress
+            - B Rank: 3.2 - 3.49 GPA, comfortable
+            - C Rank: 2.8 - 3.19 GPA, meeting basics
+            - D Rank: 2.3 - 2.79 GPA, near threshold
+            - E Rank: 2.0 - 2.29 GPA, critical risk
+            - F Rank: < 2.0 GPA, warning
+            """
+
+            full_combined_prompt = f"""
+            You are RateUrDegree's official AI academic advisor and bulletin assistant.
+            Answer the student's question accurately based on their generated degree audit report and the official Penn State Bulletin context below.
+
+            === STUDENT'S GENERATED DEGREE AUDIT REPORT ===
+            {st.session_state.get('raw_audit_report', 'No audit run yet.')}
+
+            {rank_legend}
+
+            === OFFICIAL PSU BULLETIN RETRIEVED CONTEXT ===
+            {retrieved_bulletin_context}
+
+            User Question: {prompt}
+            """
+            
+            # 5. Generate response with graceful quota error handling
+            try:
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=full_combined_prompt
+                )
+                answer = response.text
+            except Exception as e:
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    answer = "⚠️ **API Quota Exceeded:** The free tier daily request limit for Gemini has been reached. Please try again later or link a billing account in Google AI Studio to increase your limit!"
+                else:
+                    answer = f"⚠️ An error occurred while generating the response: {e}"
+            
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})

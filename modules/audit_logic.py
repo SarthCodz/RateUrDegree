@@ -1,5 +1,5 @@
 from google import genai
-from google.genai.errors import ServerError
+from google.genai.errors import ServerError, APIError
 import time
 
 def run_gemini_audit(major_name, bulletin_text, transcript_text):
@@ -14,7 +14,7 @@ def run_gemini_audit(major_name, bulletin_text, transcript_text):
     STUDENT TRANSCRIPT:
     {transcript_text}
     
-    STRICT REPORT STRUCTURE INSTRUCTIONS (DO NOT NUMBER THE HEADINGS):
+    STRICT REPORT STRUCTURE INSURUCTIONS (DO NOT NUMBER THE HEADINGS):
     1. **Student Rank Determination**:
        - Assign student a rank based on performance relative to academic standing:
          - **Z**: Flawless ~4.0 GPA, ahead of schedule.
@@ -56,8 +56,7 @@ def run_gemini_audit(major_name, bulletin_text, transcript_text):
        - Comprehensive summary and recommended schedule for the upcoming semester with total target credit count.
     """
 
-    # Retry mechanism for temporary 503 high demand errors on gemini-2.5-flash
-    for _ in range(3):
+    for attempt in range(3):
         try:
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
@@ -65,8 +64,12 @@ def run_gemini_audit(major_name, bulletin_text, transcript_text):
             )
             return response.text
         except ServerError:
-            time.sleep(1.5)
-            continue
+            time.sleep(2 ** attempt)
+        except APIError as e:
+            if "429" in str(e):
+                time.sleep(3 ** attempt)
+            else:
+                return "⚠️ API Error: Rate limit or request restrictions encountered."
         except Exception as e:
             raise e
             
