@@ -32,9 +32,9 @@ def test_run_gemini_audit_success(mock_genai_client, fixture_dir):
 def test_run_gemini_audit_rate_limit_retry(mock_genai_client):
     """Test retry behavior on server errors or rate limits."""
     mock_client_instance = MagicMock()
-    # Raise ServerError on first attempt, succeed on second
+    # Provide required response_json argument to ServerError
     mock_client_instance.models.generate_content.side_effect = [
-        ServerError("Server Error", code=500, message="Internal Error"),
+        ServerError(response_json={"error": {"message": "Internal Server Error"}}),
         MagicMock(text="**Student Rank: [B]**")
     ]
     mock_genai_client.return_value = mock_client_instance
