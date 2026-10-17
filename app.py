@@ -1,7 +1,9 @@
 import re
 import os
+import time
 import streamlit as st
 from google import genai
+from google.genai.errors import ServerError, APIError
 from modules.audit_logic import run_gemini_audit
 from modules.storage import init_sqlite_db, log_anonymous_usage
 from majors import PSU_MAJORS
@@ -22,6 +24,30 @@ if "audit_metrics" not in st.session_state:
 # --- Sidebar Controls ---
 with st.sidebar:
     st.header("Audit Configuration")
+    
+    # --- BYOK (Bring Your Own Key) Setup ---
+    st.subheader("🔑 API Key Setup")
+    user_api_key = st.text_input(
+        "Gemini API Key", 
+        type="password", 
+        placeholder="AIzaSy...",
+        help="Your API key stays secure in your browser session."
+    )
+    
+    # Direct link for users to get their key
+    st.markdown("🔗 **Don't have a key?** Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey).")
+
+    # Safety check: Fallback to local environment ONLY on your Mac
+    is_local = os.path.exists(".streamlit/secrets.toml") or "GEMINI_API_KEY" in os.environ
+
+    if user_api_key:
+        active_api_key = user_api_key
+    elif is_local:
+        active_api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
+    else:
+        active_api_key = ""
+
+    st.markdown("---")
     colleges = list(PSU_MAJORS.keys())
     selected_college = st.selectbox("Select College", colleges)
 
@@ -36,7 +62,9 @@ with st.sidebar:
 
 # --- Audit Trigger Logic ---
 if run_button:
-    if not uploaded_file:
+    if not active_api_key:
+        st.error("⚠️ Please enter your Gemini API Key in the sidebar above to run the audit.")
+    elif not uploaded_file:
         st.error("Please upload an unofficial transcript first.")
     else:
         with st.spinner("Evaluating student rank & degree audit..."):
@@ -46,7 +74,8 @@ if run_button:
             transcript_text = extract_transcript_text(uploaded_file)
             bulletin_text = fetch_bulletin_content(bulletin_url)
 
-            report_text = run_gemini_audit(selected_major, bulletin_text, transcript_text)
+            # Pass active api key into client
+            report_text = run_gemini_audit(selected_major, bulletin_text, transcript_text, api_key=active_api_key)
 
             # Log audit run to SQLite
             log_anonymous_usage(selected_major)
@@ -111,7 +140,7 @@ if st.session_state.audit_report:
 else:
     st.title("🎓 RateUrDegree")
     st.markdown("Verify your degree path instantly using official Penn State Bulletin links and AI-powered transcript auditing.")
-    st.info("👈 Configure your major and upload your transcript in the sidebar on the left to run your audit!")
+    st.info("👈 Configure your major, enter your Gemini API key, and upload your transcript in the sidebar to run your audit!")
 
 # --- Persistent Bottom Chat Assistant ---
 st.markdown("---")
@@ -125,75 +154,93 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 if prompt := st.chat_input("Ask a question about prerequisites, ETM rules, or courses..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    if not active_api_key:
+        st.error("⚠️ Please enter your Gemini API Key in the sidebar to chat with the assistant.")
+    else:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    with st.chat_message("assistant"):
-        with st.spinner("Analyzing bulletin and degree audit..."):
-            from modules.rag_engine import BulletinRAG
-            from google import genai
-            import os
+        with st.chat_message("assistant"):
+            with st.spinner("Analyzing bulletin and degree audit..."):
+                from modules.rag_engine import BulletinRAG
 
-            client = genai.Client(api_key=st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY"))
-            
-            # 1. Resolve actual URL from majors map
-            major_url = available_majors.get(selected_major, "")
-            bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
-            
-            # 2. Fetch official bulletin content & build RAG vector index
-            active_bulletin_text = fetch_bulletin_content(bulletin_url)
-            rag = BulletinRAG(client)
-            rag.chunk_bulletin(selected_major, active_bulletin_text)
-            rag.build_vector_store()
-            
-            # 3. Retrieve relevant bulletin context via vector search
-            retrieved_chunks = rag.retrieve_top_k(prompt, k=3)
-            retrieved_bulletin_context = "\n\n".join([
-                f"[{c['program']} | {c['section']}]: {c['text']}" 
-                for c in retrieved_chunks
-            ])
-            
-            # 4. Construct direct prompt combining guaranteed audit report + retrieved bulletin chunks
-            rank_legend = """
-            RANK SCALE REFERENCE:
-            - Z Rank: 4.0+ GPA, ahead of schedule
-            - S Rank: 3.8 - 3.99 GPA, elite & on track
-            - A Rank: 3.5 - 3.79 GPA, strong progress
-            - B Rank: 3.2 - 3.49 GPA, comfortable
-            - C Rank: 2.8 - 3.19 GPA, meeting basics
-            - D Rank: 2.3 - 2.79 GPA, near threshold
-            - E Rank: 2.0 - 2.29 GPA, critical risk
-            - F Rank: < 2.0 GPA, warning
-            """
+                client = genai.Client(api_key=active_api_key)
+                
+                # 1. Resolve actual URL from majors map
+                major_url = available_majors.get(selected_major, "")
+                bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
+                
+                # 2. Fetch official bulletin content & build RAG vector index
+                active_bulletin_text = fetch_bulletin_content(bulletin_url)
+                rag = BulletinRAG(client)
+                rag.chunk_bulletin(selected_major, active_bulletin_text)
+                rag.build_vector_store()
+                
+                # 3. Retrieve relevant bulletin context via vector search
+                retrieved_chunks = rag.retrieve_top_k(prompt, k=3)
+                retrieved_bulletin_context = "\n\n".join([
+                    f"[{c['program']} | {c['section']}]: {c['text']}" 
+                    for c in retrieved_chunks
+                ])
+                
+                # 4. Construct direct prompt combining guaranteed audit report + retrieved bulletin chunks
+                rank_legend = """
+                RANK SCALE REFERENCE:
+                - Z Rank: 4.0+ GPA, ahead of schedule
+                - S Rank: 3.8 - 3.99 GPA, elite & on track
+                - A Rank: 3.5 - 3.79 GPA, strong progress
+                - B Rank: 3.2 - 3.49 GPA, comfortable
+                - C Rank: 2.8 - 3.19 GPA, meeting basics
+                - D Rank: 2.3 - 2.79 GPA, near threshold
+                - E Rank: 2.0 - 2.29 GPA, critical risk
+                - F Rank: < 2.0 GPA, warning
+                """
 
-            full_combined_prompt = f"""
-            You are RateUrDegree's official AI academic advisor and bulletin assistant.
-            Answer the student's question accurately based on their generated degree audit report and the official Penn State Bulletin context below.
+                full_combined_prompt = f"""
+                You are RateUrDegree's official AI academic advisor and bulletin assistant.
+                Answer the student's question accurately based on their generated degree audit report and the official Penn State Bulletin context below.
 
-            === STUDENT'S GENERATED DEGREE AUDIT REPORT ===
-            {st.session_state.get('raw_audit_report', 'No audit run yet.')}
+                === STUDENT'S GENERATED DEGREE AUDIT REPORT ===
+                {st.session_state.get('raw_audit_report', 'No audit run yet.')}
 
-            {rank_legend}
+                {rank_legend}
 
-            === OFFICIAL PSU BULLETIN RETRIEVED CONTEXT ===
-            {retrieved_bulletin_context}
+                === OFFICIAL PSU BULLETIN RETRIEVED CONTEXT ===
+                {retrieved_bulletin_context}
 
-            User Question: {prompt}
-            """
-            
-            # 5. Generate response with graceful quota error handling
-            try:
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=full_combined_prompt
-                )
-                answer = response.text
-            except Exception as e:
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                    answer = "⚠️ **API Quota Exceeded:** The free tier daily request limit for Gemini has been reached. Please try again later or link a billing account in Google AI Studio to increase your limit!"
-                else:
-                    answer = f"⚠️ An error occurred while generating the response: {e}"
-            
-            st.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+                User Question: {prompt}
+                """
+                
+                # 5. Generate response with exponential backoff for 503 errors and graceful quota handling
+                answer = None
+                for attempt in range(3):
+                    try:
+                        response = client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=full_combined_prompt
+                        )
+                        answer = response.text
+                        break
+                    except ServerError:
+                        if attempt == 2:
+                            answer = "⚠️ **Server Busy:** Google's Gemini servers are currently experiencing high demand (503 Unavailable). Please try asking your question again in a few seconds!"
+                        time.sleep(2 ** attempt)
+                    except APIError as e:
+                        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                            answer = "⚠️ **API Quota Exceeded:** The daily request limit for this Gemini API key has been reached. Please check your Google AI Studio account limit!"
+                            break
+                        else:
+                            answer = f"⚠️ API Error: {e}"
+                            break
+                    except Exception as e:
+                        if "503" in str(e) or "UNAVAILABLE" in str(e):
+                            if attempt == 2:
+                                answer = "⚠️ **Server Busy:** Google's Gemini servers are currently experiencing high demand (503 Unavailable). Please try asking your question again in a few seconds!"
+                            time.sleep(2 ** attempt)
+                        else:
+                            answer = f"⚠️ An error occurred while generating the response: {e}"
+                            break
+                
+                st.markdown(answer)
+                st.session_state.messages.append({"role": "assistant", "content": answer})
