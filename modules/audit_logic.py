@@ -107,12 +107,6 @@ def extract_rank(response_text: str) -> str:
         return match.group(1).upper()
     return "UNKNOWN"
 
-def run_demo_audit_mode(api_key: str = None) -> str:
-    """Executes demo mode without constructing genai.Client when key is missing."""
-    if api_key:
-        raise ValueError("API key provided when expecting offline demo mode.")
-    return "OFFLINE_DEMO_REPORT"
-
 def run_gemini_audit(major_name: str, bulletin_text: str, transcript_text: str, api_key: str = None) -> str:
     """Executes audit with Gemini client, incorporating local GPA/credit calculation and retry logic."""
     if not api_key:
