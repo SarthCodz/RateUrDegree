@@ -45,7 +45,7 @@ SAMPLE_PRECOMPUTED_REPORT = """
 ### Quick Student Metrics
 - Student Year: Sophomore
 - Cumulative GPA: 3.84
-- Credits Completed: 21.0
+- Credits Completed: 31.0
 - Student Rank: S
 
 ### Degree Progress & Audit Summary
