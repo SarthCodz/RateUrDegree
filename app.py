@@ -179,15 +179,16 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Quick Suggestion Buttons for RAG Chat
+# Quick Suggestion Buttons anchored neatly above the input bar
 st.caption("💡 **Quick Questions:**")
 q_col1, q_col2, q_col3 = st.columns(3)
 example_prompt = None
-if q_col1.button("Prereqs for CMPSC 360?"):
+
+if q_col1.button("Prereqs for CMPSC 360?", use_container_width=True):
     example_prompt = "What are the prerequisites for CMPSC 360?"
-if q_col2.button("CS ETM Requirements?"):
+if q_col2.button("CS ETM Requirements?", use_container_width=True):
     example_prompt = "What are the Entrance-to-Major (ETM) requirements for Computer Science?"
-if q_col3.button("GenEd Recommendations?"):
+if q_col3.button("GenEd Recommendations?", use_container_width=True):
     example_prompt = "What General Education requirements are needed for Engineering?"
 
 prompt = example_prompt or st.chat_input("Ask a question about prerequisites, ETM rules, or courses...")
