@@ -170,26 +170,29 @@ else:
 
 # --- Persistent Bottom Chat Assistant ---
 st.markdown("---")
-st.subheader("💬 Bulletin Assistant Chat")
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+chat_container = st.container()
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+with chat_container:
+    st.subheader("💬 Bulletin Assistant Chat")
 
-# Quick Suggestion Buttons anchored neatly above the input bar
-st.caption("💡 **Quick Questions:**")
-q_col1, q_col2, q_col3 = st.columns(3)
-example_prompt = None
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-if q_col1.button("Prereqs for CMPSC 360?", use_container_width=True):
-    example_prompt = "What are the prerequisites for CMPSC 360?"
-if q_col2.button("CS ETM Requirements?", use_container_width=True):
-    example_prompt = "What are the Entrance-to-Major (ETM) requirements for Computer Science?"
-if q_col3.button("GenEd Recommendations?", use_container_width=True):
-    example_prompt = "What General Education requirements are needed for Engineering?"
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    st.caption("💡 **Quick Questions:**")
+    q_col1, q_col2, q_col3 = st.columns(3)
+    example_prompt = None
+
+    if q_col1.button("Prereqs for CMPSC 360?", use_container_width=True):
+        example_prompt = "What are the prerequisites for CMPSC 360?"
+    if q_col2.button("CS ETM Requirements?", use_container_width=True):
+        example_prompt = "What are the Entrance-to-Major (ETM) requirements for Computer Science?"
+    if q_col3.button("GenEd Recommendations?", use_container_width=True):
+        example_prompt = "What General Education requirements are needed for Engineering?"
 
 prompt = example_prompt or st.chat_input("Ask a question about prerequisites, ETM rules, or courses...")
 
@@ -198,84 +201,85 @@ if prompt:
         st.error("⚠️ Please enter your Gemini API Key in the sidebar to chat with the assistant.")
     else:
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        with chat_container:
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Analyzing bulletin and degree audit..."):
-                from modules.rag_engine import BulletinRAG
+            with st.chat_message("assistant"):
+                with st.spinner("Analyzing bulletin and degree audit..."):
+                    from modules.rag_engine import BulletinRAG
 
-                client = genai.Client(api_key=active_api_key)
-                
-                major_url = available_majors.get(selected_major, "")
-                bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
-                
-                active_bulletin_text = fetch_bulletin_content(bulletin_url)
-                rag = BulletinRAG(client)
-                rag.chunk_bulletin(selected_major, active_bulletin_text)
-                rag.build_vector_store()
-                
-                retrieved_chunks = rag.retrieve_top_k(prompt, k=3)
-                retrieved_bulletin_context = "\n\n".join([
-                    f"[{c['program']} | {c['section']}]: {c['text']}" 
-                    for c in retrieved_chunks
-                ])
-                
-                rank_legend = """
-                RANK SCALE REFERENCE:
-                - Z Rank: 4.0+ GPA, ahead of schedule
-                - S Rank: 3.8 - 3.99 GPA, elite & on track
-                - A Rank: 3.5 - 3.79 GPA, strong progress
-                - B Rank: 3.2 - 3.49 GPA, comfortable
-                - C Rank: 2.8 - 3.19 GPA, meeting basics
-                - D Rank: 2.3 - 2.79 GPA, near threshold
-                - E Rank: 2.0 - 2.29 GPA, critical risk
-                - F Rank: < 2.0 GPA, warning
-                """
+                    client = genai.Client(api_key=active_api_key)
+                    
+                    major_url = available_majors.get(selected_major, "")
+                    bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
+                    
+                    active_bulletin_text = fetch_bulletin_content(bulletin_url)
+                    rag = BulletinRAG(client)
+                    rag.chunk_bulletin(selected_major, active_bulletin_text)
+                    rag.build_vector_store()
+                    
+                    retrieved_chunks = rag.retrieve_top_k(prompt, k=3)
+                    retrieved_bulletin_context = "\n\n".join([
+                        f"[{c['program']} | {c['section']}]: {c['text']}" 
+                        for c in retrieved_chunks
+                    ])
+                    
+                    rank_legend = """
+                    RANK SCALE REFERENCE:
+                    - Z Rank: 4.0+ GPA, ahead of schedule
+                    - S Rank: 3.8 - 3.99 GPA, elite & on track
+                    - A Rank: 3.5 - 3.79 GPA, strong progress
+                    - B Rank: 3.2 - 3.49 GPA, comfortable
+                    - C Rank: 2.8 - 3.19 GPA, meeting basics
+                    - D Rank: 2.3 - 2.79 GPA, near threshold
+                    - E Rank: 2.0 - 2.29 GPA, critical risk
+                    - F Rank: < 2.0 GPA, warning
+                    """
 
-                full_combined_prompt = f"""
-                You are RateUrDegree's official AI academic advisor and bulletin assistant.
-                Answer the student's question accurately based on their generated degree audit report and the official Penn State Bulletin context below.
+                    full_combined_prompt = f"""
+                    You are RateUrDegree's official AI academic advisor and bulletin assistant.
+                    Answer the student's question accurately based on their generated degree audit report and the official Penn State Bulletin context below.
 
-                === STUDENT'S GENERATED DEGREE AUDIT REPORT ===
-                {st.session_state.get('raw_audit_report', 'No audit run yet.')}
+                    === STUDENT'S GENERATED DEGREE AUDIT REPORT ===
+                    {st.session_state.get('raw_audit_report', 'No audit run yet.')}
 
-                {rank_legend}
+                    {rank_legend}
 
-                === OFFICIAL PSU BULLETIN RETRIEVED CONTEXT ===
-                {retrieved_bulletin_context}
+                    === OFFICIAL PSU BULLETIN RETRIEVED CONTEXT ===
+                    {retrieved_bulletin_context}
 
-                User Question: {prompt}
-                """
-                
-                answer = None
-                for attempt in range(3):
-                    try:
-                        response = client.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=full_combined_prompt
-                        )
-                        answer = response.text
-                        break
-                    except ServerError:
-                        if attempt == 2:
-                            answer = "⚠️ **Server Busy:** Google's Gemini servers are currently experiencing high demand (503 Unavailable). Please try asking your question again in a few seconds!"
-                        time.sleep(2 ** attempt)
-                    except APIError as e:
-                        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                            answer = "⚠️ **API Quota Exceeded:** The daily request limit for this Gemini API key has been reached. Please check your Google AI Studio account limit!"
+                    User Question: {prompt}
+                    """
+                    
+                    answer = None
+                    for attempt in range(3):
+                        try:
+                            response = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=full_combined_prompt
+                            )
+                            answer = response.text
                             break
-                        else:
-                            answer = f"⚠️ API Error: {e}"
-                            break
-                    except Exception as e:
-                        if "503" in str(e) or "UNAVAILABLE" in str(e):
+                        except ServerError:
                             if attempt == 2:
                                 answer = "⚠️ **Server Busy:** Google's Gemini servers are currently experiencing high demand (503 Unavailable). Please try asking your question again in a few seconds!"
                             time.sleep(2 ** attempt)
-                        else:
-                            answer = f"⚠️ An error occurred while generating the response: {e}"
-                            break
-                
-                st.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+                        except APIError as e:
+                            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                                answer = "⚠️ **API Quota Exceeded:** The daily request limit for this Gemini API key has been reached. Please check your Google AI Studio account limit!"
+                                break
+                            else:
+                                answer = f"⚠️ API Error: {e}"
+                                break
+                        except Exception as e:
+                            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                                if attempt == 2:
+                                    answer = "⚠️ **Server Busy:** Google's Gemini servers are currently experiencing high demand (503 Unavailable). Please try asking your question again in a few seconds!"
+                                time.sleep(2 ** attempt)
+                            else:
+                                answer = f"⚠️ An error occurred while generating the response: {e}"
+                                break
+                    
+                    st.markdown(answer)
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
