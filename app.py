@@ -3,12 +3,15 @@ import os
 import streamlit as st
 from google import genai
 from modules.audit_logic import run_gemini_audit
+from modules.storage import init_sqlite_db, log_anonymous_usage
 from majors import PSU_MAJORS
 from utils import extract_transcript_text, fetch_bulletin_content
 
 st.set_page_config(page_title="RateUrDegree - PSU Degree Auditor", page_icon="🎓", layout="wide")
 
-# --- Initialize Persistent Session State ---
+# --- Initialize SQLite Database & Persistent Session State ---
+init_sqlite_db()
+
 if "audit_report" not in st.session_state:
     st.session_state.audit_report = None
 if "raw_audit_report" not in st.session_state:
@@ -44,6 +47,9 @@ if run_button:
             bulletin_text = fetch_bulletin_content(bulletin_url)
 
             report_text = run_gemini_audit(selected_major, bulletin_text, transcript_text)
+
+            # Log audit run to SQLite
+            log_anonymous_usage(selected_major)
 
             # Parse metrics
             rank_match = re.search(r"Student Rank:\s*([Z|S|A|B|C|D|E|F])", report_text, re.IGNORECASE)
@@ -142,7 +148,11 @@ if prompt := st.chat_input("Ask a question about prerequisites, ETM rules, or co
             rag.build_vector_store()
             
             # 3. Retrieve relevant bulletin context via vector search
-            retrieved_bulletin_context = rag.retrieve_context(prompt)
+            retrieved_chunks = rag.retrieve_top_k(prompt, k=3)
+            retrieved_bulletin_context = "\n\n".join([
+                f"[{c['program']} | {c['section']}]: {c['text']}" 
+                for c in retrieved_chunks
+            ])
             
             # 4. Construct direct prompt combining guaranteed audit report + retrieved bulletin chunks
             rank_legend = """
