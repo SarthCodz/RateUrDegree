@@ -22,6 +22,10 @@ if "audit_metrics" not in st.session_state:
     st.session_state.audit_metrics = None
 if "use_sample_transcript" not in st.session_state:
     st.session_state.use_sample_transcript = False
+if "selected_college_idx" not in st.session_state:
+    st.session_state.selected_college_idx = 0
+if "selected_major_idx" not in st.session_state:
+    st.session_state.selected_major_idx = 0
 
 SAMPLE_TRANSCRIPT = """
 PENN STATE UNIVERSITY UNOFFICIAL TRANSCRIPT
@@ -35,6 +39,31 @@ CMPSC 121 - Introduction to Programming Techniques: A (3.0)
 CMPSC 122 - Intermediate Programming: A (3.0)
 PHYS 211 - General Physics: Mechanics: B+ (4.0)
 ENGL 15 - Rhetoric and Composition: A (3.0)
+"""
+
+SAMPLE_PRECOMPUTED_REPORT = """
+### Quick Student Metrics
+- **Student Year:** Sophomore
+- **Cumulative GPA:** 3.84
+- **Credits Completed:** 31.0
+- **Student Rank:** S
+
+### Degree Progress & Audit Summary
+The student is enrolled in **Computer Science (B.S.)** and is maintaining elite academic standing with an **S Rank (3.84 GPA)**.
+
+#### Completed Core Courses:
+- MATH 140 (Calculus I) - Grade: A (4.0 credits)
+- MATH 141 (Calculus II) - Grade: A (4.0 credits)
+- CMPSC 121 (Intro to Programming) - Grade: A (3.0 credits)
+- CMPSC 122 (Intermediate Programming) - Grade: A (3.0 credits)
+- PHYS 211 (Physics: Mechanics) - Grade: B+ (4.0 credits)
+- ENGL 15 (Rhetoric & Composition) - Grade: A (3.0 credits)
+
+#### Recommended Next-Semester Schedule:
+1. **CMPSC 360** - Discrete Structures for Computer Science
+2. **CMPSC 221** - Object-Oriented Programming with Web Applications
+3. **MATH 220** - Matrices and Linear Algebra
+4. **PHYS 212** - General Physics: Electricity and Magnetism
 """
 
 # --- Sidebar Controls ---
@@ -63,10 +92,20 @@ with st.sidebar:
 
     st.markdown("---")
     colleges = list(PSU_MAJORS.keys())
-    selected_college = st.selectbox("Select College", colleges)
+    
+    # Default index lookup for Engineering
+    if "College of Engineering" in colleges and st.session_state.use_sample_transcript:
+        st.session_state.selected_college_idx = colleges.index("College of Engineering")
+
+    selected_college = st.selectbox("Select College", colleges, index=st.session_state.selected_college_idx)
 
     available_majors = PSU_MAJORS.get(selected_college, {})
-    selected_major = st.selectbox("Select Major", list(available_majors.keys()))
+    major_list = list(available_majors.keys())
+
+    if selected_college == "College of Engineering" and "Computer Science (B.S.)" in major_list and st.session_state.use_sample_transcript:
+        st.session_state.selected_major_idx = major_list.index("Computer Science (B.S.)")
+
+    selected_major = st.selectbox("Select Major", major_list, index=min(st.session_state.selected_major_idx, max(0, len(major_list)-1)))
 
     use_custom_url = st.checkbox("Use Custom Bulletin URL")
     custom_url = st.text_input("Custom Bulletin URL", placeholder="https://bulletins.psu.edu/...") if use_custom_url else ""
@@ -78,7 +117,9 @@ with st.sidebar:
     st.markdown("**🚀 Quick Demo Mode**")
     if st.button("📄 Load Sample CS Transcript"):
         st.session_state.use_sample_transcript = True
-        st.success("Sample CS transcript loaded successfully!")
+        st.session_state.selected_college_idx = colleges.index("College of Engineering") if "College of Engineering" in colleges else 0
+        st.success("Sample CS transcript & Engineering college loaded!")
+        st.rerun()
     
     if st.session_state.use_sample_transcript:
         if st.button("❌ Clear Sample Transcript"):
@@ -89,23 +130,26 @@ with st.sidebar:
 
 # --- Audit Trigger Logic ---
 if run_button:
-    if not active_api_key:
+    # Allow sample transcript to run WITHOUT an API key using precomputed results
+    if not active_api_key and not st.session_state.use_sample_transcript:
         st.error("⚠️ Please enter your Gemini API Key in the sidebar above to run the audit.")
     elif not uploaded_file and not st.session_state.use_sample_transcript:
         st.error("Please upload an unofficial transcript or click 'Load Sample CS Transcript'.")
     else:
         with st.spinner("Evaluating student rank & degree audit..."):
-            major_url = available_majors.get(selected_major, "")
-            bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
-
-            if st.session_state.use_sample_transcript:
-                transcript_text = SAMPLE_TRANSCRIPT
+            if st.session_state.use_sample_transcript and not active_api_key:
+                # Instant offline mock audit for zero-friction recruiter reviews
+                report_text = SAMPLE_PRECOMPUTED_REPORT
+                time.sleep(0.5)
             else:
-                transcript_text = extract_transcript_text(uploaded_file)
-                
-            bulletin_text = fetch_bulletin_content(bulletin_url)
+                major_url = available_majors.get(selected_major, "")
+                bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
 
-            report_text = run_gemini_audit(selected_major, bulletin_text, transcript_text, api_key=active_api_key)
+                transcript_text = SAMPLE_TRANSCRIPT if st.session_state.use_sample_transcript else extract_transcript_text(uploaded_file)
+                bulletin_text = fetch_bulletin_content(bulletin_url)
+
+                report_text = run_gemini_audit(selected_major, bulletin_text, transcript_text, api_key=active_api_key)
+            
             log_anonymous_usage(selected_major)
 
             rank_match = re.search(r"Student Rank:\s*([Z|S|A|B|C|D|E|F])", report_text, re.IGNORECASE)
@@ -166,7 +210,7 @@ if st.session_state.audit_report:
 else:
     st.title("🎓 RateUrDegree")
     st.markdown("Verify your degree path instantly using official Penn State Bulletin links and AI-powered transcript auditing.")
-    st.info("👈 Configure your major, enter your Gemini API key, and upload your transcript (or click **Load Sample CS Transcript**) in the sidebar to run your audit!")
+    st.info("💡 Click **Load Sample CS Transcript** in the sidebar to try it instantly without a key! Add your own Gemini API key only if you want to audit your own transcript.")
 
 # --- Collapsible Bottom Chat Assistant ---
 st.markdown("---")
@@ -193,8 +237,17 @@ with st.expander("💬 **Bulletin Assistant Chat (Ask questions about prerequisi
     prompt = example_prompt or st.chat_input("Ask a question about prerequisites, ETM rules, or courses...")
 
     if prompt:
-        if not active_api_key:
-            st.error("⚠️ Please enter your Gemini API Key in the sidebar to chat with the assistant.")
+        if not active_api_key and not st.session_state.use_sample_transcript:
+            st.error("⚠️ Please enter your Gemini API Key in the sidebar or load the sample transcript to chat with the assistant.")
+        elif not active_api_key and st.session_state.use_sample_transcript:
+            # Friendly fallback response for sample transcript chat without user key
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            answer = "⚠️ **Demo Mode Notice:** The interactive RAG chat requires a live Gemini API key. Please enter your free API key in the sidebar to chat with the bulletin assistant!"
+            with st.chat_message("assistant"):
+                st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
         else:
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
