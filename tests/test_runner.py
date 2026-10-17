@@ -137,8 +137,8 @@ def test_16_success_on_first_attempt():
 def test_17_retries_twice_then_succeeds():
     mock_client = MagicMock()
     mock_client.models.generate_content.side_effect = [
-        ServerError("503", response=MagicMock(status_code=503), body={}),
-        ServerError("503", response=MagicMock(status_code=503), body={}),
+        ServerError("503", response_json={"error": "unavailable"}),
+        ServerError("503", response_json={"error": "unavailable"}),
         MagicMock(text="Success after retries"),
     ]
     with patch("modules.audit_logic.genai.Client", return_value=mock_client), \
@@ -150,7 +150,7 @@ def test_17_retries_twice_then_succeeds():
 def test_18_server_error_max_retries_raises():
     mock_client = MagicMock()
     mock_client.models.generate_content.side_effect = ServerError(
-        "503", response=MagicMock(status_code=503), body={}
+        "503", response_json={"error": "unavailable"}
     )
     with patch("modules.audit_logic.genai.Client", return_value=mock_client), \
          patch("modules.audit_logic.time.sleep"):
@@ -159,10 +159,12 @@ def test_18_server_error_max_retries_raises():
     assert mock_client.models.generate_content.call_count == 3
 
 def test_19_rate_limit_returns_error_string():
+    class FakeRateLimitError(APIError):
+        code = 429
+        def __init__(self):
+            pass  # skip real constructor
     mock_client = MagicMock()
-    api_err = MagicMock(spec=APIError)
-    api_err.code = 429
-    mock_client.models.generate_content.side_effect = api_err
+    mock_client.models.generate_content.side_effect = FakeRateLimitError()
     with patch("modules.audit_logic.genai.Client", return_value=mock_client):
         result = run_gemini_audit("CS", "b", "t", api_key="key123")
     assert "Rate limit" in result or "429" in result
