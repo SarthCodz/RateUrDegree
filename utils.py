@@ -1,10 +1,16 @@
 import pypdf
 import requests
 from bs4 import BeautifulSoup
+from modules.storage import get_cached_bulletin, set_cached_bulletin
 
 def fetch_bulletin_content(base_url):
     clean_url = base_url.split("#")[0].rstrip("/")
     
+    # --- Check SQLite Cache first to save time and network requests ---
+    cached_content = get_cached_bulletin(clean_url)
+    if cached_content:
+        return cached_content
+
     # Penn State Bulletin sub-routes containing actual course lists and ETM rules
     target_routes = [
         f"{clean_url}/howtogetin/",
@@ -55,7 +61,12 @@ def fetch_bulletin_content(base_url):
     if len(full_content.strip()) < 200:
         return "Error: Scraped content insufficient."
         
-    return full_content[:35000]
+    final_content = full_content[:35000]
+    
+    # --- Save to SQLite Cache ---
+    set_cached_bulletin(clean_url, final_content)
+    
+    return final_content
 
 def extract_transcript_text(uploaded_file):
     if uploaded_file.name.endswith(".pdf"):

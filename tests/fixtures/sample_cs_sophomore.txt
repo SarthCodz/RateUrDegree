@@ -1,8 +1,15 @@
-Student: John Doe
-Major: Computer Science (B.S.)
-Term: Fall 2025
-MATH 140 | 4.0 credits | Grade: A
-CMPSC 121 | 3.0 credits | Grade: A
-ENGL 15 | 3.0 credits | Grade: B
-Cumulative GPA: 3.80
-Total Credits: 10.0
+PENNSYLVANIA STATE UNIVERSITY - OFFICIAL ACADEMIC TRANSCRIPT
+STUDENT: ANONYMIZED STUDENT
+MAJOR: Computer Science (B.S.)
+
+TERM: Fall 2025
+MATH 140 - Calculus With Analytic Geometry I - 4.0 - A
+CMPSC 121 - Introduction to Programming Techniques - 3.0 - A
+ENGL 15 - Rhetoric and Composition - 3.0 - B
+PHYS 211 - General Physics: Mechanics - 4.0 - A
+
+TERM: Spring 2026
+MATH 141 - Calculus With Analytic Geometry II - 4.0 - A
+CMPSC 122 - Intermediate Programming - 3.0 - A
+CHEM 110 - Chemical Principles - 3.0 - B
+CAS 100 - Effective Speech - 3.0 - A

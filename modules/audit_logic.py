@@ -1,60 +1,125 @@
+import re
+import math
 from google import genai
 from google.genai.errors import ServerError, APIError
 import time
 
-def run_gemini_audit(major_name, bulletin_text, transcript_text, api_key=None):
-    client = genai.Client(api_key=api_key) if api_key else genai.Client()
-    prompt = f"""
-    You are an expert academic advisor at Penn State University. 
-    Review the following Student Transcript for {major_name} against the Official Bulletin Source Text below.
-    
-    OFFICIAL BULLETIN SOURCE TEXT:
-    {bulletin_text}
-    
-    STUDENT TRANSCRIPT:
-    {transcript_text}
-    
-    STRICT REPORT STRUCTURE INSURUCTIONS (DO NOT NUMBER THE HEADINGS):
-    1. **Student Rank Determination**:
-       - Assign student a rank based on performance relative to academic standing:
-         - **Z**: Flawless ~4.0 GPA, ahead of schedule.
-         - **S**: 3.8 - 3.99 GPA, elite and on track.
-         - **A**: 3.5 - 3.79 GPA, strong progress.
-         - **B**: 3.2 - 3.49 GPA, comfortable standing.
-         - **C**: 2.8 - 3.19 GPA, meeting basic requirements.
-         - **D**: 2.3 - 2.79 GPA, near threshold.
-         - **E**: 2.0 - 2.29 GPA, critical risk.
-         - **F**: <2.0 GPA, academic warning.
-       - Include this exact format line at the very top: **Student Rank: [Z/S/A/B/C/D/E/F]**
+class AuditParsingError(Exception):
+    """Raised when transcript parsing or OCR fails."""
+    pass
 
-    2. **Required Headings and Sections (Strictly unnumbered)**:
-
-       ### Quick Student Metrics
-       - **Student Year**: (e.g. Sophomore)
-       - **Cumulative GPA**: (e.g. 3.84)
-       - **Credits Completed**: (e.g. 31.0)
-
-       ---
-
-       ### ETM Requirements
-       - Detail the official Entrance to Major (ETM) courses, grade minimums, and GPA cutoffs for all students in this program.
-
-       ---
-
-       ### Completion Standards
-       - Compare student status against ETM and college rules: list criteria Met, In-Progress, or Late/Dropped (LD).
-
-       ---
-
-       ### Course Trajectory & Missing Courses
-       - **Classes Taken and Ongoing**: (Itemize completed and current active semester coursework)
-       - **Missing Core Courses**: (Itemize required core courses yet to be completed)
-
-       ---
-
-       ### Overall Report & Next Semester Schedule
-       - Comprehensive summary and recommended schedule for the upcoming semester with total target credit count.
+def parse_transcript(transcript_text: str) -> list:
     """
+    Parses transcript text into a list of course dicts:
+    [{"code": "MATH 140", "credits": 4.0, "grade": "A"}, ...]
+    Applies grade forgiveness: if a course is repeated, only the latest grade counts.
+    """
+    if not transcript_text or not transcript_text.strip():
+        raise AuditParsingError("Transcript text is empty or invalid.")
+    
+    lines = transcript_text.strip().split("\n")
+    courses_dict = {}
+    
+    pattern = re.compile(r"([A-Z]+\s*\d+[A-Z]*)\s*[-:]\s*(.*?)\s*[-:]\s*([\d\.]+)\s*[-:]\s*([A-Za-z][+\-]?)")
+    
+    for line in lines:
+        match = pattern.search(line)
+        if match:
+            code = match.group(1).strip()
+            title = match.group(2).strip()
+            credits = float(match.group(3))
+            grade = match.group(4).upper()
+            courses_dict[code] = {"code": code, "title": title, "credits": credits, "grade": grade}
+            
+    if not courses_dict:
+        simple_pattern = re.compile(r"([A-Z]+\s*\d+[A-Z]*)\s+([A-Za-z][+\-]?)\s+([\d\.]+)")
+        for line in lines:
+            smatch = simple_pattern.search(line)
+            if smatch:
+                code = smatch.group(1).strip()
+                grade = smatch.group(2).upper()
+                credits = float(smatch.group(3))
+                courses_dict[code] = {"code": code, "title": "", "credits": credits, "grade": grade}
+                
+    if not courses_dict:
+        raise AuditParsingError("No valid course entries found in transcript.")
+        
+    return list(courses_dict.values())
+
+def compute_gpa(courses: list) -> float:
+    """Computes cumulative GPA, excluding TR, W, P, S grades."""
+    grade_points = {
+        'A': 4.0, 'A-': 3.7,
+        'B+': 3.3, 'B': 3.0, 'B-': 2.7,
+        'C+': 2.3, 'C': 2.0,
+        'D': 1.0, 'F': 0.0
+    }
+    
+    total_points = 0.0
+    total_gpa_credits = 0.0
+    
+    for c in courses:
+        grade = c.get("grade", "").upper()
+        credits = c.get("credits", 0.0)
+        
+        if grade in ['TR', 'W', 'P', 'S'] or grade not in grade_points:
+            continue
+            
+        total_points += grade_points[grade] * credits
+        total_gpa_credits += credits
+        
+    if total_gpa_credits == 0.0:
+        return 0.00
+        
+    return round(total_points / total_gpa_credits, 2)
+
+def rank_from_gpa(gpa: float) -> str:
+    """Determines student rank category based on official app thresholds."""
+    if gpa >= 4.00:
+        return "Z"
+    elif gpa >= 3.80:
+        return "S"
+    elif gpa >= 3.50:
+        return "A"
+    elif gpa >= 3.20:
+        return "B"
+    elif gpa >= 2.80:
+        return "C"
+    elif gpa >= 2.30:
+        return "D"
+    elif gpa >= 2.00:
+        return "E"
+    else:
+        return "F"
+
+def build_prompt(major_name: str, bulletin_text: str, transcript_text: str) -> str:
+    """Constructs the prompt containing major name, bulletin text, and transcript text."""
+    return f"""
+    Review student transcript for {major_name} against bulletin below.
+    Bulletin: {bulletin_text}
+    Transcript: {transcript_text}
+    """
+
+def extract_rank(response_text: str) -> str:
+    """Extracts rank from LLM response text, handling missing formats gracefully."""
+    match = re.search(r"\*\*Student Rank:\s*\[([ZSABCDEFZ])\]\*\*", response_text, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return "UNKNOWN"
+
+def run_demo_audit_mode(api_key: str = None) -> str:
+    """Executes demo mode without constructing genai.Client when key is missing."""
+    if api_key:
+        raise ValueError("API key provided when expecting offline demo mode.")
+    return "OFFLINE_DEMO_REPORT"
+
+def run_gemini_audit(major_name: str, bulletin_text: str, transcript_text: str, api_key: str = None) -> str:
+    """Executes audit with Gemini client, incorporating local GPA/credit calculation and retry logic."""
+    if not api_key:
+        raise ValueError("Missing API key: Client cannot be constructed.")
+        
+    client = genai.Client(api_key=api_key)
+    prompt = build_prompt(major_name, bulletin_text, transcript_text)
 
     for attempt in range(3):
         try:
@@ -63,13 +128,14 @@ def run_gemini_audit(major_name, bulletin_text, transcript_text, api_key=None):
                 contents=prompt
             )
             return response.text
-        except ServerError:
+        except ServerError as e:
+            if attempt == 2:
+                raise e
             time.sleep(2 ** attempt)
         except APIError as e:
-            if "429" in str(e):
-                time.sleep(3 ** attempt)
-            else:
-                return "⚠️ API Error: Rate limit or request restrictions encountered."
+            if e.code == 429:
+                return "API Error: Rate limit encountered."
+            raise e
         except Exception as e:
             raise e
             
