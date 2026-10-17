@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
-import json
+from google.genai.errors import ServerError
 
 from modules.audit_logic import run_gemini_audit
 
@@ -12,7 +12,6 @@ def fixture_dir():
 @patch("modules.audit_logic.genai.Client")
 def test_run_gemini_audit_success(mock_genai_client, fixture_dir):
     """Test successful audit run with mocked Gemini Client returning expected rank and metrics."""
-    # Setup mock response
     mock_response = MagicMock()
     mock_response.text = "**Student Rank: [S]**\n\n### Quick Student Metrics\n- **Cumulative GPA**: 3.80"
     
@@ -33,9 +32,9 @@ def test_run_gemini_audit_success(mock_genai_client, fixture_dir):
 def test_run_gemini_audit_rate_limit_retry(mock_genai_client):
     """Test retry behavior on server errors or rate limits."""
     mock_client_instance = MagicMock()
-    # Simulate server error on first call, success on second
+    # Raise ServerError on first attempt, succeed on second
     mock_client_instance.models.generate_content.side_effect = [
-        Exception("Server Error"),
+        ServerError("Server Error", code=500, message="Internal Error"),
         MagicMock(text="**Student Rank: [B]**")
     ]
     mock_genai_client.return_value = mock_client_instance
