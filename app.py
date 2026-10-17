@@ -20,6 +20,22 @@ if "raw_audit_report" not in st.session_state:
     st.session_state.raw_audit_report = None
 if "audit_metrics" not in st.session_state:
     st.session_state.audit_metrics = None
+if "use_sample_transcript" not in st.session_state:
+    st.session_state.use_sample_transcript = False
+
+SAMPLE_TRANSCRIPT = """
+PENN STATE UNIVERSITY UNOFFICIAL TRANSCRIPT
+Major: Computer Science (B.S.)
+Cumulative GPA: 3.84
+
+COURSES COMPLETED:
+MATH 140 - Calculus With Analytic Geometry I: A (4.0)
+MATH 141 - Calculus With Analytic Geometry II: A (4.0)
+CMPSC 121 - Introduction to Programming Techniques: A (3.0)
+CMPSC 122 - Intermediate Programming: A (3.0)
+PHYS 211 - General Physics: Mechanics: B+ (4.0)
+ENGL 15 - Rhetoric and Composition: A (3.0)
+"""
 
 # --- Sidebar Controls ---
 with st.sidebar:
@@ -34,10 +50,8 @@ with st.sidebar:
         help="Your API key stays secure in your browser session."
     )
     
-    # Direct link for users to get their key
     st.markdown("🔗 **Don't have a key?** Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey).")
 
-    # Safety check: Fallback to local environment ONLY on your Mac
     is_local = os.path.exists(".streamlit/secrets.toml") or "GEMINI_API_KEY" in os.environ
 
     if user_api_key:
@@ -58,29 +72,42 @@ with st.sidebar:
     custom_url = st.text_input("Custom Bulletin URL", placeholder="https://bulletins.psu.edu/...") if use_custom_url else ""
 
     uploaded_file = st.file_uploader("Upload Unofficial Transcript (PDF/TXT)", type=["pdf", "txt"])
+    
+    # --- Sample Transcript Quick Demo Button ---
+    st.markdown("---")
+    st.markdown("**🚀 Quick Demo Mode**")
+    if st.button("📄 Load Sample CS Transcript"):
+        st.session_state.use_sample_transcript = True
+        st.success("Sample CS transcript loaded successfully!")
+    
+    if st.session_state.use_sample_transcript:
+        if st.button("❌ Clear Sample Transcript"):
+            st.session_state.use_sample_transcript = False
+            st.rerun()
+
     run_button = st.button("Run Degree Audit", type="primary")
 
 # --- Audit Trigger Logic ---
 if run_button:
     if not active_api_key:
         st.error("⚠️ Please enter your Gemini API Key in the sidebar above to run the audit.")
-    elif not uploaded_file:
-        st.error("Please upload an unofficial transcript first.")
+    elif not uploaded_file and not st.session_state.use_sample_transcript:
+        st.error("Please upload an unofficial transcript or click 'Load Sample CS Transcript'.")
     else:
         with st.spinner("Evaluating student rank & degree audit..."):
             major_url = available_majors.get(selected_major, "")
             bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
 
-            transcript_text = extract_transcript_text(uploaded_file)
+            if st.session_state.use_sample_transcript:
+                transcript_text = SAMPLE_TRANSCRIPT
+            else:
+                transcript_text = extract_transcript_text(uploaded_file)
+                
             bulletin_text = fetch_bulletin_content(bulletin_url)
 
-            # Pass active api key into client
             report_text = run_gemini_audit(selected_major, bulletin_text, transcript_text, api_key=active_api_key)
-
-            # Log audit run to SQLite
             log_anonymous_usage(selected_major)
 
-            # Parse metrics
             rank_match = re.search(r"Student Rank:\s*([Z|S|A|B|C|D|E|F])", report_text, re.IGNORECASE)
             rank_letter = rank_match.group(1).upper() if rank_match else "S"
 
@@ -97,7 +124,6 @@ if run_button:
             clean_report = re.sub(r"### Quick Student Metrics.*?(?=\n#|\n---|\Z)", "", clean_report, flags=re.DOTALL | re.IGNORECASE).strip()
             clean_report = re.sub(r"^---+\s*", "", clean_report).strip()
 
-            # Save into session state so it survives chat reruns
             st.session_state.audit_report = clean_report
             st.session_state.raw_audit_report = report_text
             st.session_state.audit_metrics = {
@@ -140,7 +166,7 @@ if st.session_state.audit_report:
 else:
     st.title("🎓 RateUrDegree")
     st.markdown("Verify your degree path instantly using official Penn State Bulletin links and AI-powered transcript auditing.")
-    st.info("👈 Configure your major, enter your Gemini API key, and upload your transcript in the sidebar to run your audit!")
+    st.info("👈 Configure your major, enter your Gemini API key, and upload your transcript (or click **Load Sample CS Transcript**) in the sidebar to run your audit!")
 
 # --- Persistent Bottom Chat Assistant ---
 st.markdown("---")
@@ -153,7 +179,20 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Ask a question about prerequisites, ETM rules, or courses..."):
+# Quick Suggestion Buttons for RAG Chat
+st.caption("💡 **Quick Questions:**")
+q_col1, q_col2, q_col3 = st.columns(3)
+example_prompt = None
+if q_col1.button("Prereqs for CMPSC 360?"):
+    example_prompt = "What are the prerequisites for CMPSC 360?"
+if q_col2.button("CS ETM Requirements?"):
+    example_prompt = "What are the Entrance-to-Major (ETM) requirements for Computer Science?"
+if q_col3.button("GenEd Recommendations?"):
+    example_prompt = "What General Education requirements are needed for Engineering?"
+
+prompt = example_prompt or st.chat_input("Ask a question about prerequisites, ETM rules, or courses...")
+
+if prompt:
     if not active_api_key:
         st.error("⚠️ Please enter your Gemini API Key in the sidebar to chat with the assistant.")
     else:
@@ -167,24 +206,20 @@ if prompt := st.chat_input("Ask a question about prerequisites, ETM rules, or co
 
                 client = genai.Client(api_key=active_api_key)
                 
-                # 1. Resolve actual URL from majors map
                 major_url = available_majors.get(selected_major, "")
                 bulletin_url = custom_url if (use_custom_url and custom_url) else major_url
                 
-                # 2. Fetch official bulletin content & build RAG vector index
                 active_bulletin_text = fetch_bulletin_content(bulletin_url)
                 rag = BulletinRAG(client)
                 rag.chunk_bulletin(selected_major, active_bulletin_text)
                 rag.build_vector_store()
                 
-                # 3. Retrieve relevant bulletin context via vector search
                 retrieved_chunks = rag.retrieve_top_k(prompt, k=3)
                 retrieved_bulletin_context = "\n\n".join([
                     f"[{c['program']} | {c['section']}]: {c['text']}" 
                     for c in retrieved_chunks
                 ])
                 
-                # 4. Construct direct prompt combining guaranteed audit report + retrieved bulletin chunks
                 rank_legend = """
                 RANK SCALE REFERENCE:
                 - Z Rank: 4.0+ GPA, ahead of schedule
@@ -212,7 +247,6 @@ if prompt := st.chat_input("Ask a question about prerequisites, ETM rules, or co
                 User Question: {prompt}
                 """
                 
-                # 5. Generate response with exponential backoff for 503 errors and graceful quota handling
                 answer = None
                 for attempt in range(3):
                     try:
