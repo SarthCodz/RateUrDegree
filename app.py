@@ -43,10 +43,10 @@ ENGL 15 - Rhetoric and Composition: A (3.0)
 
 SAMPLE_PRECOMPUTED_REPORT = """
 ### Quick Student Metrics
-- **Student Year:** Sophomore
-- **Cumulative GPA:** 3.84
-- **Credits Completed:** 31.0
-- **Student Rank:** S
+- Student Year: Sophomore
+- Cumulative GPA: 3.84
+- Credits Completed: 21.0
+- Student Rank: S
 
 ### Degree Progress & Audit Summary
 The student is enrolled in **Computer Science (B.S.)** and is maintaining elite academic standing with an **S Rank (3.84 GPA)**.
@@ -93,7 +93,6 @@ with st.sidebar:
     st.markdown("---")
     colleges = list(PSU_MAJORS.keys())
     
-    # Default index lookup for Engineering
     if "College of Engineering" in colleges and st.session_state.use_sample_transcript:
         st.session_state.selected_college_idx = colleges.index("College of Engineering")
 
@@ -130,7 +129,6 @@ with st.sidebar:
 
 # --- Audit Trigger Logic ---
 if run_button:
-    # Allow sample transcript to run WITHOUT an API key using precomputed results
     if not active_api_key and not st.session_state.use_sample_transcript:
         st.error("⚠️ Please enter your Gemini API Key in the sidebar above to run the audit.")
     elif not uploaded_file and not st.session_state.use_sample_transcript:
@@ -138,7 +136,6 @@ if run_button:
     else:
         with st.spinner("Evaluating student rank & degree audit..."):
             if st.session_state.use_sample_transcript and not active_api_key:
-                # Instant offline mock audit for zero-friction recruiter reviews
                 report_text = SAMPLE_PRECOMPUTED_REPORT
                 time.sleep(0.5)
             else:
@@ -156,13 +153,13 @@ if run_button:
             rank_letter = rank_match.group(1).upper() if rank_match else "S"
 
             year_match = re.search(r"Student Year:\s*([^\n]+)", report_text, re.IGNORECASE)
-            student_year = year_match.group(1).strip() if year_match else "Sophomore"
+            student_year = year_match.group(1).replace("*", "").strip() if year_match else "Sophomore"
 
             gpa_match = re.search(r"Cumulative GPA:\s*([^\n]+)", report_text, re.IGNORECASE)
-            student_gpa = gpa_match.group(1).strip() if gpa_match else "3.84"
+            student_gpa = gpa_match.group(1).replace("*", "").strip() if gpa_match else "3.84"
 
             credits_match = re.search(r"Credits Completed:\s*([^\n]+)", report_text, re.IGNORECASE)
-            student_credits = credits_match.group(1).strip() if credits_match else "31.0"
+            student_credits = credits_match.group(1).replace("*", "").strip() if credits_match else "21.0"
 
             clean_report = re.sub(r"Student Rank:\s*[Z|S|A|B|C|D|E|F]\s*\n?", "", report_text, flags=re.IGNORECASE)
             clean_report = re.sub(r"### Quick Student Metrics.*?(?=\n#|\n---|\Z)", "", clean_report, flags=re.DOTALL | re.IGNORECASE).strip()
@@ -240,7 +237,6 @@ with st.expander("💬 **Bulletin Assistant Chat (Ask questions about prerequisi
         if not active_api_key and not st.session_state.use_sample_transcript:
             st.error("⚠️ Please enter your Gemini API Key in the sidebar or load the sample transcript to chat with the assistant.")
         elif not active_api_key and st.session_state.use_sample_transcript:
-            # Friendly fallback response for sample transcript chat without user key
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
