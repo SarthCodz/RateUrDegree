@@ -168,14 +168,10 @@ else:
     st.markdown("Verify your degree path instantly using official Penn State Bulletin links and AI-powered transcript auditing.")
     st.info("👈 Configure your major, enter your Gemini API key, and upload your transcript (or click **Load Sample CS Transcript**) in the sidebar to run your audit!")
 
-# --- Persistent Bottom Chat Assistant ---
+# --- Collapsible Bottom Chat Assistant ---
 st.markdown("---")
 
-chat_container = st.container()
-
-with chat_container:
-    st.subheader("💬 Bulletin Assistant Chat")
-
+with st.expander("💬 **Bulletin Assistant Chat (Ask questions about prerequisites, ETM rules, or courses)**", expanded=bool(st.session_state.audit_report)):
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -194,14 +190,13 @@ with chat_container:
     if q_col3.button("GenEd Recommendations?", use_container_width=True):
         example_prompt = "What General Education requirements are needed for Engineering?"
 
-prompt = example_prompt or st.chat_input("Ask a question about prerequisites, ETM rules, or courses...")
+    prompt = example_prompt or st.chat_input("Ask a question about prerequisites, ETM rules, or courses...")
 
-if prompt:
-    if not active_api_key:
-        st.error("⚠️ Please enter your Gemini API Key in the sidebar to chat with the assistant.")
-    else:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with chat_container:
+    if prompt:
+        if not active_api_key:
+            st.error("⚠️ Please enter your Gemini API Key in the sidebar to chat with the assistant.")
+        else:
+            st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
 
