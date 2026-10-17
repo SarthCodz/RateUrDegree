@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 
 # Import actual functions from your core logic module
-from audit_logic import (
+from modules.audit_logic import (
     calculate_gpa,
     determine_rank,
     check_missing_requirements,

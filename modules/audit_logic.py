@@ -2,8 +2,8 @@ from google import genai
 from google.genai.errors import ServerError, APIError
 import time
 
-def run_gemini_audit(major_name, bulletin_text, transcript_text):
-    client = genai.Client()
+def run_gemini_audit(major_name, bulletin_text, transcript_text, api_key=None):
+    client = genai.Client(api_key=api_key) if api_key else genai.Client()
     prompt = f"""
     You are an expert academic advisor at Penn State University. 
     Review the following Student Transcript for {major_name} against the Official Bulletin Source Text below.
